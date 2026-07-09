@@ -78,12 +78,11 @@ class TrainConfig:
     log_dir: str = "logs"
     tokenizer_id: str = "meta-llama/Llama-2-7b-hf"  # HF token required; set in .env
 
-    # ── HF Hub (optional — for cross-pod data/checkpoint persistence) ──────────────
-    # Leave as empty string to disable — no uploads will be attempted.
-    # Set in .env as HF_SHARD_REPO / HF_CHECKPOINT_REPO, or override here.
-    hf_shard_repo: str = ""           # e.g. "myuser/cdx144m-data"
-    hf_checkpoint_repo: str = ""      # e.g. "myuser/cdx144m-data" (can be same repo)
-    hf_checkpoint_folder: str = "checkpoints"  # subfolder in hf_checkpoint_repo
+    # HF dataset repo IDs (owner/repo-name) — leave empty to disable.
+    # Set via HF_SHARD_REPO / HF_CHECKPOINT_REPO in .env (populated in __post_init__).
+    hf_shard_repo: str = ""           # e.g. "rishabhcdb/cdx_144m"
+    hf_checkpoint_repo: str = ""      # e.g. "rishabhcdb/cdx_144m" (can be same repo)
+    hf_checkpoint_folder: str = "checkpoints"
 
     def __post_init__(self):
         """

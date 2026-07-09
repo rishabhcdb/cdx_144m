@@ -38,10 +38,11 @@ from tqdm import tqdm
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 # Public HF resolve URLs for TinyStoriesV2 (no auth required)
-STORIES_URLS = [
-    "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt",
-    "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt",
-]
+# STORIES_URLS = [
+#     "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-train.txt",
+#     "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStoriesV2-GPT4-valid.txt",
+# ]
+DATASET_REPO = "Geralt-Targaryen/nsfw"   # your HF dataset repo id
 DOWNLOAD_DIR     = "data/raw"
 OUT_DIR          = "data/shards"
 TOKENIZER_ID     = "meta-llama/Llama-2-7b-hf"
@@ -86,7 +87,7 @@ def write_shard(tokens: list[int], path: str) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prepare TinyStories token shards.")
+    parser = argparse.ArgumentParser(description="Prepare stories token shards.")
     parser.add_argument(
         "--smoke_test", action="store_true",
         help="Override token targets to tiny values for quick pipeline testing.",
@@ -113,19 +114,22 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_ID, token=hf_token)
 
     # ── Download ──────────────────────────────────────────────────────────────
-    print(f"\nDownloading TinyStories files…")
-    local_files = [wget_download(url, DOWNLOAD_DIR) for url in STORIES_URLS]
+    print(f"\nDownloading stories files…")
+    # local_files = [wget_download(url, DOWNLOAD_DIR) for url in STORIES_URLS]
 
     # ── Collect all stories ───────────────────────────────────────────────────
-    print(f"\nParsing stories…")
-    all_stories: list[str] = []
-    for path in local_files:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = f.read()
-        stories = [s.strip() for s in raw.split(STORY_SEP) if s.strip()]
-        all_stories.extend(stories)
-        print(f"  {path}: {len(stories):,} stories")
+    import pandas as pd
+    from huggingface_hub import hf_hub_download
 
+    print(f"\nLoading stories from {DATASET_REPO}…")
+    parquet_path = hf_hub_download(
+        repo_id=DATASET_REPO,
+        filename="nsfw.parquet",   # exact filename in your repo
+        repo_type="dataset",
+        token=hf_token,
+    )
+    df = pd.read_parquet(parquet_path)
+    all_stories: list[str] = df["text"].dropna().tolist()
     print(f"  Total stories: {len(all_stories):,}")
 
     # ── Document-level shuffle ────────────────────────────────────────────────

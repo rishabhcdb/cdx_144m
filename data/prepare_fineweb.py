@@ -62,8 +62,11 @@ def main():
     # Runtime-only overrides — module-level constants are never mutated
     target_train_tokens = 5_000_000 if args.smoke_test else TARGET_TRAIN_TOKENS
     val_tokens_target   = 200_000   if args.smoke_test else VAL_TOKENS
+    shard_size = min(SHARD_SIZE, target_train_tokens) if args.smoke_test else SHARD_SIZE
     if args.smoke_test:
         print(f"[smoke_test] Token targets overridden: train={target_train_tokens:,}  val={val_tokens_target:,}")
+    
+    
 
     load_dotenv()
     hf_token = os.environ.get("HF_TOKEN")
@@ -79,7 +82,7 @@ def main():
 
     # ── Datatrove reader ──────────────────────────────────────────────────────
     from datatrove.pipeline.readers import ParquetReader
-    data_reader = ParquetReader(DATASET_PATH, limit=None)
+    data_reader = ParquetReader(DATASET_PATH, limit=-1)
 
     rng = random.Random(SEED)
 
@@ -145,7 +148,7 @@ def main():
         shard_doc_buf.append(toks)
         shard_tok_count += len(toks)
 
-        if shard_tok_count >= SHARD_SIZE:
+        if shard_tok_count >= shard_size:
             n = flush_shard(shard_doc_buf, shard_idx)
             total_train_tokens += n
             pbar.update(n)

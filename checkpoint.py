@@ -49,7 +49,6 @@ def _upload_checkpoint_async(
     local_path: str,
     repo_id: str,
     path_in_repo: str,
-    hf_token: str,
 ) -> None:
     """
     Upload a checkpoint file to HF Hub in a background daemon thread.
@@ -59,7 +58,10 @@ def _upload_checkpoint_async(
     def _do_upload():
         try:
             from huggingface_hub import HfApi
-            HfApi(token=hf_token).upload_file(
+            hf_token = os.environ.get("HF_TOKEN", "")
+            api = HfApi(token=hf_token)
+            api.create_repo(repo_id=repo_id, repo_type="dataset", private=True, exist_ok=True)
+            api.upload_file(
                 path_or_fileobj=local_path,
                 path_in_repo=path_in_repo,
                 repo_id=repo_id,
@@ -67,7 +69,6 @@ def _upload_checkpoint_async(
             )
             print(f"  [ckpt] HF upload done: {path_in_repo} → {repo_id}")
         except Exception as exc:
-            # Non-fatal — local checkpoint is already saved; this is best-effort
             print(f"  [ckpt] HF upload FAILED (non-fatal): {exc}")
 
     t = threading.Thread(target=_do_upload, daemon=True, name=f"hf-upload-{os.path.basename(local_path)}")
@@ -123,7 +124,6 @@ class CheckpointManager:
                 local_path=path,
                 repo_id=self.config.hf_checkpoint_repo,
                 path_in_repo=f"{self.config.hf_checkpoint_folder}/{os.path.basename(path)}",
-                hf_token=os.environ.get("HF_TOKEN", ""),
             )
 
         # Prune rolling window
@@ -142,7 +142,6 @@ class CheckpointManager:
                     local_path=best_path,
                     repo_id=self.config.hf_checkpoint_repo,
                     path_in_repo=f"{self.config.hf_checkpoint_folder}/best_val.pt",
-                    hf_token=os.environ.get("HF_TOKEN", ""),
                 )
 
         return path
