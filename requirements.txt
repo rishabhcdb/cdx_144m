@@ -1,0 +1,8 @@
+torch>=2.5.0
+numpy
+transformers
+datasets
+sentencepiece
+datatrove[io]          # FineWeb streaming via ParquetReader (GPU pod only)
+tqdm
+python-dotenv          # loads HF_TOKEN from .env
