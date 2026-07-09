@@ -36,12 +36,42 @@ Time-based safety:
 import dataclasses
 import glob
 import os
+import threading
 import time
 from typing import Optional
 
 import torch
 
 from config import TrainConfig
+
+
+def _upload_checkpoint_async(
+    local_path: str,
+    repo_id: str,
+    path_in_repo: str,
+    hf_token: str,
+) -> None:
+    """
+    Upload a checkpoint file to HF Hub in a background daemon thread.
+    Returns immediately — the training loop is never blocked by the upload.
+    Errors are caught and printed; they never propagate to the main thread.
+    """
+    def _do_upload():
+        try:
+            from huggingface_hub import HfApi
+            HfApi(token=hf_token).upload_file(
+                path_or_fileobj=local_path,
+                path_in_repo=path_in_repo,
+                repo_id=repo_id,
+                repo_type="dataset",
+            )
+            print(f"  [ckpt] HF upload done: {path_in_repo} → {repo_id}")
+        except Exception as exc:
+            # Non-fatal — local checkpoint is already saved; this is best-effort
+            print(f"  [ckpt] HF upload FAILED (non-fatal): {exc}")
+
+    t = threading.Thread(target=_do_upload, daemon=True, name=f"hf-upload-{os.path.basename(local_path)}")
+    t.start()
 
 
 class CheckpointManager:
@@ -87,6 +117,15 @@ class CheckpointManager:
         self._last_save_t = time.time()
         print(f"  [ckpt] Saved {path}" + (f"  val_loss={val_loss:.4f}" if val_loss else ""))
 
+        # Background upload to HF Hub (no-op if hf_checkpoint_repo is empty)
+        if self.config.hf_checkpoint_repo:
+            _upload_checkpoint_async(
+                local_path=path,
+                repo_id=self.config.hf_checkpoint_repo,
+                path_in_repo=f"{self.config.hf_checkpoint_folder}/{os.path.basename(path)}",
+                hf_token=os.environ.get("HF_TOKEN", ""),
+            )
+
         # Prune rolling window
         self._prune_old_checkpoints()
 
@@ -96,6 +135,15 @@ class CheckpointManager:
             best_path = os.path.join(self.out_dir, "best_val.pt")
             torch.save(ckpt, best_path)
             print(f"  [ckpt] New best val → {best_path}  (loss={val_loss:.4f})")
+
+            # Background upload for best_val.pt as well
+            if self.config.hf_checkpoint_repo:
+                _upload_checkpoint_async(
+                    local_path=best_path,
+                    repo_id=self.config.hf_checkpoint_repo,
+                    path_in_repo=f"{self.config.hf_checkpoint_folder}/best_val.pt",
+                    hf_token=os.environ.get("HF_TOKEN", ""),
+                )
 
         return path
 

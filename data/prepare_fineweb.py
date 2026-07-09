@@ -26,6 +26,7 @@ Prerequisites on GPU pod:
 Fixed seed (1337) for all shuffling — matches the global reproducibility seed.
 """
 
+import argparse
 import os
 import random
 import sys
@@ -51,6 +52,19 @@ EOS_ID           = 2                  # Llama-2 <eos> token id
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Prepare FineWeb token shards.")
+    parser.add_argument(
+        "--smoke_test", action="store_true",
+        help="Override token targets to tiny values for quick pipeline testing.",
+    )
+    args = parser.parse_args()
+
+    # Runtime-only overrides — module-level constants are never mutated
+    target_train_tokens = 5_000_000 if args.smoke_test else TARGET_TRAIN_TOKENS
+    val_tokens_target   = 200_000   if args.smoke_test else VAL_TOKENS
+    if args.smoke_test:
+        print(f"[smoke_test] Token targets overridden: train={target_train_tokens:,}  val={val_tokens_target:,}")
+
     load_dotenv()
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
@@ -89,7 +103,7 @@ def main():
     # never cut off mid-sentence.
     # These documents are excluded from training shards entirely.
 
-    print(f"\nCollecting validation split (~{VAL_TOKENS/1e6:.0f}M tokens)…")
+    print(f"\nCollecting validation split (~{val_tokens_target/1e6:.2f}M tokens)…")
     val_tokens: list[int] = []
     val_doc_count = 0
 
@@ -98,7 +112,7 @@ def main():
         toks = tokenize_doc(doc.text)
         val_tokens.extend(toks)
         val_doc_count += 1
-        if len(val_tokens) >= VAL_TOKENS:
+        if len(val_tokens) >= val_tokens_target:
             break
 
     val_path = os.path.join(OUT_DIR, "val_fineweb.bin")
@@ -107,7 +121,7 @@ def main():
     del val_tokens
 
     # ── Phase 2: training shards ───────────────────────────────────────────────
-    print(f"\nTokenising training data (target: {TARGET_TRAIN_TOKENS/1e9:.1f}B tokens)…")
+    print(f"\nTokenising training data (target: {target_train_tokens/1e9:.3f}B tokens)…")
 
     shard_idx          = 0
     total_train_tokens = 0
@@ -123,7 +137,7 @@ def main():
         print(f"  Shard {idx:05d}: {n:,} tokens → {path}")
         return n
 
-    pbar = tqdm(unit=" tok", unit_scale=True, total=TARGET_TRAIN_TOKENS)
+    pbar = tqdm(unit=" tok", unit_scale=True, total=target_train_tokens)
 
     # doc_iter is already advanced past the val documents — continue from there
     for doc in doc_iter:
@@ -139,11 +153,11 @@ def main():
             shard_doc_buf    = []
             shard_tok_count  = 0
 
-        if total_train_tokens >= TARGET_TRAIN_TOKENS:
+        if total_train_tokens >= target_train_tokens:
             break   # stop at clean document boundary
 
     # Flush any remaining docs into a final partial shard
-    if shard_doc_buf and total_train_tokens < TARGET_TRAIN_TOKENS:
+    if shard_doc_buf and total_train_tokens < target_train_tokens:
         n = flush_shard(shard_doc_buf, shard_idx)
         total_train_tokens += n
         pbar.update(n)

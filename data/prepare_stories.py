@@ -24,6 +24,7 @@ Prerequisites on GPU pod:
 Fixed seed (1337) for story-level shuffle — same global seed.
 """
 
+import argparse
 import os
 import random
 import subprocess
@@ -85,6 +86,19 @@ def write_shard(tokens: list[int], path: str) -> int:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Prepare TinyStories token shards.")
+    parser.add_argument(
+        "--smoke_test", action="store_true",
+        help="Override token targets to tiny values for quick pipeline testing.",
+    )
+    args = parser.parse_args()
+
+    # Runtime-only overrides — module-level constants are never mutated
+    target_tokens    = 5_000_000 if args.smoke_test else TARGET_TOKENS
+    val_tokens_target = 200_000  if args.smoke_test else VAL_TOKENS
+    if args.smoke_test:
+        print(f"[smoke_test] Token targets overridden: train={target_tokens:,}  val={val_tokens_target:,}")
+
     load_dotenv()
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
@@ -124,10 +138,10 @@ def main():
     # is reached. Write the full accumulated list (no truncation) so the last
     # story is never cut off. Remove these stories from the training pool.
 
-    print(f"\nCarving val split (~{VAL_TOKENS/1e3:.0f}K tokens)…")
+    print(f"\nCarving val split (~{val_tokens_target/1e3:.0f}K tokens)…")
     val_buf: list[int] = []
     val_story_count = 0
-    while all_stories and len(val_buf) < VAL_TOKENS:
+    while all_stories and len(val_buf) < val_tokens_target:
         story = all_stories.pop(0)
         val_buf.extend(tokenize_story(story, tokenizer))
         val_story_count += 1
@@ -138,7 +152,7 @@ def main():
     del val_buf
 
     # ── Phase 2: training shards ──────────────────────────────────────────────
-    print(f"\nTokenising training data (target: {TARGET_TOKENS/1e6:.0f}M tokens)…")
+    print(f"\nTokenising training data (target: {target_tokens/1e6:.0f}M tokens)…")
 
     shard_idx    = 0
     total_tokens = 0
@@ -157,11 +171,11 @@ def main():
             shard_idx += 1
             shard_buf  = shard_buf[SHARD_SIZE:]
 
-        if total_tokens >= TARGET_TOKENS:
+        if total_tokens >= target_tokens:
             break
 
     # Flush remainder into a final partial shard
-    if shard_buf and total_tokens < TARGET_TOKENS:
+    if shard_buf and total_tokens < target_tokens:
         path = os.path.join(OUT_DIR, f"stories_{shard_idx:05d}.bin")
         n    = write_shard(shard_buf, path)
         total_tokens += n

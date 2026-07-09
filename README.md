@@ -132,6 +132,104 @@ python train.py --resume checkpoints/step_005000.pt
 
 ---
 
+## Cloud-Pod Workflow (Multi-Pod / Preemptible)
+
+### Smoke-test data prep (fast pipeline check, ~minutes)
+
+```bash
+# Produces 5M train tokens + 200K val tokens instead of full targets
+python data/prepare_fineweb.py --smoke_test
+python data/prepare_stories.py --smoke_test
+```
+
+Everything else (tokenisation, EOS insertion, shard writing, val carve-out) is
+identical — only the token targets are overridden at runtime.
+
+### Push shards to HF Hub (after full prep)
+
+```bash
+# Set HF_SHARD_REPO in .env first (e.g. myuser/cdx144m-data)
+python data/push_to_hub.py
+# Optional overrides:
+# python data/push_to_hub.py --repo myuser/cdx144m-data --shard_dir data/shards
+```
+
+### Pull shards on a new pod (before training)
+
+```bash
+python data/pull_from_hub.py
+# Optional override:
+# python data/pull_from_hub.py --repo myuser/cdx144m-data
+```
+
+### Checkpoint push (automatic, non-blocking)
+
+Set `HF_CHECKPOINT_REPO` in `.env` (can be the same repo as `HF_SHARD_REPO`):
+
+```bash
+# .env
+HF_CHECKPOINT_REPO=myuser/cdx144m-data
+```
+
+Once set, `CheckpointManager.save()` spawns a background daemon thread after
+each `torch.save()`. The upload runs concurrently — the training loop never waits.
+Both `step_*.pt` and `best_val.pt` are uploaded under `checkpoints/` in the repo.
+Checkpoints that get pruned locally by the rolling-window logic are **not** pushed.
+
+### Pull latest checkpoint on a new pod (before resuming)
+
+```bash
+# Pull the specific checkpoint you want to resume from:
+python -c "
+from huggingface_hub import hf_hub_download
+import os, dotenv
+dotenv.load_dotenv()
+path = hf_hub_download(
+    repo_id=os.environ['HF_CHECKPOINT_REPO'],
+    repo_type='dataset',
+    filename='checkpoints/step_009536.pt',  # or best_val.pt
+    local_dir='.',
+)
+print('Downloaded to:', path)
+"
+
+# Then resume training:
+python train.py --resume checkpoints/step_009536.pt
+```
+
+> **Tip:** To list all available checkpoints in the repo:
+> ```bash
+> python -c "
+> from huggingface_hub import HfApi; import os, dotenv; dotenv.load_dotenv()
+> files = HfApi().list_repo_files(os.environ['HF_CHECKPOINT_REPO'], repo_type='dataset')
+> print([f for f in files if f.startswith('checkpoints/')])
+> "
+> ```
+
+### Full new-pod session sequence
+
+```bash
+# 1. Install deps + set tokens
+pip install -r requirements.txt
+cp .env .env.bak  # keep a copy; fill in HF_TOKEN, HF_SHARD_REPO, HF_CHECKPOINT_REPO
+
+# 2. Pull shards (~GB download)
+python data/pull_from_hub.py
+
+# 3. Pull latest checkpoint
+python -c "
+from huggingface_hub import hf_hub_download
+import os, dotenv; dotenv.load_dotenv()
+hf_hub_download(os.environ['HF_CHECKPOINT_REPO'], repo_type='dataset',
+    filename='checkpoints/best_val.pt', local_dir='.')
+"
+
+# 4. Resume training (checkpoints auto-push in background)
+python train.py --resume checkpoints/best_val.pt
+```
+
+---
+
 ## Smoke-Test Pass Criterion
 
 ```
@@ -147,3 +245,4 @@ Common causes: bad weight init, LR too high, data loading returning garbage.
 
 SFT scaffolding is planned for a separate pass after pretraining is validated and complete.  
 See `project_plan2.md` Section 4 for the target dataset spec (20k–30k rows, persona sub-set, EOS-terminated).
+
